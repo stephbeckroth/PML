@@ -1,0 +1,83 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "Stephanie R. Beck Roth"
+date: "August 5, 2015"
+output: html_document
+---
+This data analysis is based upon the work:
+
+"Ugulino, W.; Cardador, D.; Vega, K.; Velloso, E.; Milidiu, R.; Fuks, H. Wearable Computing: Accelerometers' Data Classification of Body Postures and Movements. Proceedings of 21st Brazilian Symposium on Artificial Intelligence. Advances in Artificial Intelligence - SBIA 2012. In: Lecture Notes in Computer Science. , pp. 52-61. Curitiba, PR: Springer Berlin / Heidelberg, 2012. ISBN 978-3-642-34458-9. DOI: 10.1007/978-3-642-34459-6_6. 
+
+Read more: http://groupware.les.inf.puc-rio.br/har#ixzz3jVT4OMbE"
+________________________________________________________________________________________________________
+
+Analysis was performed to predict the activity records obtained from activity monitors.  The classe variable was correctly predicted on 20 measurement recordss from a fitness device in the data referenced.
+```{r,echo=TRUE}
+set.seed(080515)
+library(doParallel)
+registerDoParallel(cores = 6)
+library(e1071)
+library(caret)
+library(AppliedPredictiveModeling)
+library(ElemStatLearn)
+library(randomForest)
+library(rpart)
+library(elasticnet)
+library(forecast)
+
+if (!file.exists("./PML_Training.csv")){
+    fileUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+    download.file(fileUrl,destfile = "./PML_Training.csv", method="curl")
+}
+training <- read.csv("./PML_Training.csv", na.strings=c("#DIV/0!","NA",""))
+if (!file.exists("./PML_Testing.csv")){
+    fileUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+    download.file(fileUrl,destfile = "./PML_Testing.csv", method="curl")
+}
+testing <- read.csv("./PML_Testing.csv", na.strings=c("#DIV/0!","NA",""))
+
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+```
+Training data was provided along with a test dataset. The original training data contained 19,622 observations with 160 variables.  Of these variables, several were uninformative (identical for all observations) and others were entirely or mostly comprised of missing data.  As a result of this, the decision was made to exclude all variables from the analysis which did not contain complete data.  This excluded 100 variables.  Four other variables were identified which were not relevant to fitness measurements and were also removed.  These were the first four variables, X, user_name, raw_timestamp_part_1 and raw_timestamp_part_2.  The remaining 56 variables were kept for analysis on the training data. The testing dataset was also restricted to only these variables as well.
+```{r, echo=TRUE}
+rem <- apply(training,2,function(x) { sum(is.na(x)) })
+training0 <- training[,!rem]
+training0 <- training0[,c(5:60)]
+keep <- colnames(testing) %in% names(training0)
+testing0 <- testing[,keep]
+```
+The provided training data set was partioned to save 20% of the data, 3,923 observations, to validate the training data.  The remaining 80% of the original training data, 15,699 observations, were used to train the model. A random forest model was used with 10 fold cross validation in a parallel implementation. 
+```{r, echo=TRUE}
+train <- createDataPartition(y = training0$classe, p=0.8,list=FALSE)
+train0 <- training0[train,]
+test0 <- training0[-train,]
+
+tc <- trainControl(method = "cv", number = 10)
+fitMod0 <- train(classe ~ ., data = train0, method = "rf", trControl =tc, 
+                 prox=TRUE, allowParallel=TRUE)
+print(fitMod0)
+```
+The out of sample error should be slightly more than the in sample error.  The predicted out of sample error is approximately 0.3%.
+```{r,ech0=TRUE}
+print(fitMod0$finalModel)
+```
+The resulting final model was then validated on the 20% of data that was withheld from the original training set.
+```{r,echo=TRUE}
+#Validate on the test0 subset
+pMod0 <- predict(fitMod0,test0)
+confusionMatrix(pMod0,test0$classe)
+```
+Given the initial chosen model was extremely accurate, greater than 99.7%, no further model selection was performed. The prediction of classe on the original testing observations results were then  stored in a single file by id using the provided pml_write_files function.
+```{r,echo=TRUE}
+#Predict the classe on Testing
+pMod <- predict(fitMod0,testing0)
+pModc <- as.character(pMod)
+pml_write_files(pModc)
+```
+This model correctly classified all 20 test records.
